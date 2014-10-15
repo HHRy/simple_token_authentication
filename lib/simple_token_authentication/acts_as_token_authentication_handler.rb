@@ -33,6 +33,7 @@ module SimpleTokenAuthentication
       record = find_record_from_identifier(entity)
 
       if token_correct?(record, entity, token_comparator)
+        @_is_token_request = true
         perform_sign_in!(record, sign_in_handler)
       end
     end
