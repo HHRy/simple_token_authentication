@@ -1,16 +1,16 @@
 Simple Token Authentication
 ===========================
 
-[![Gem Version](https://badge.fury.io/rb/simple_token_authentication.png)](http://badge.fury.io/rb/simple_token_authentication)
-[![Build Status](https://travis-ci.org/gonzalo-bulnes/simple_token_authentication.png?branch=master)](https://travis-ci.org/gonzalo-bulnes/simple_token_authentication)
-[![Code Climate](https://codeclimate.com/github/gonzalo-bulnes/simple_token_authentication.png)](https://codeclimate.com/github/gonzalo-bulnes/simple_token_authentication)
+[![Gem Version](https://badge.fury.io/rb/simple_token_authentication.svg)](http://badge.fury.io/rb/simple_token_authentication)
+[![Build Status](https://travis-ci.org/gonzalo-bulnes/simple_token_authentication.svg?branch=master)](https://travis-ci.org/gonzalo-bulnes/simple_token_authentication)
+[![Code Climate](https://codeclimate.com/github/gonzalo-bulnes/simple_token_authentication.svg)](https://codeclimate.com/github/gonzalo-bulnes/simple_token_authentication)
 [![Dependency Status](https://gemnasium.com/gonzalo-bulnes/simple_token_authentication.svg)](https://gemnasium.com/gonzalo-bulnes/simple_token_authentication)
 [![security](https://hakiri.io/github/gonzalo-bulnes/simple_token_authentication/master.svg)](https://hakiri.io/github/gonzalo-bulnes/simple_token_authentication/master)
 [![Inline docs](http://inch-ci.org/github/gonzalo-bulnes/simple_token_authentication.svg?branch=master)](http://inch-ci.org/github/gonzalo-bulnes/simple_token_authentication)
 
 Token authentication support has been removed from [Devise][devise] for security reasons. In [this gist][original-gist], Devise's [José Valim][josevalim] explains how token authentication should be performed in order to remain safe.
 
-This gem packages the content of the gist.
+This gem packages the content of the gist and provides a set of convenient options for increased flexibility.
 
   [devise]: https://github.com/plataformatec/devise
   [original-gist]: https://gist.github.com/josevalim/fb706b1e933ef01e4fb6
@@ -29,8 +29,12 @@ Install [Devise][devise] with any modules you want, then add the gem to your `Ge
 ```ruby
 # Gemfile
 
-gem 'simple_token_authentication'
+gem 'simple_token_authentication', '~> 1.0' # see semver.org
 ```
+
+### Make models token authenticatable
+
+#### ActiveRecord
 
 First define which model or models will be token authenticatable (typ. `User`):
 
@@ -54,39 +58,76 @@ class User < ActiveRecord::Base
 end
 ```
 
-If the model or models you chose have no `:authentication_token` attribute, add them one (with an index):
+If the model or models you chose have no `:authentication_token` attribute, add them one (with a unique index):
 
 ```bash
-rails g migration add_authentication_token_to_users authentication_token:string:index
+rails g migration add_authentication_token_to_users "authentication_token:string{30}:uniq"
 rake db:migrate
 ```
 
-Finally define which controller will handle authentication (typ. `ApplicationController`) for which _token authenticatable_ model:
+#### Mongoid
+
+Define which model or models will be token authenticatable (typ. `User`):
+
+```ruby
+# app/models/user.rb
+
+class User
+  include Mongoid::Document
+  # Include default devise modules. Others available are:
+  # :confirmable, :lockable, :timeoutable and :omniauthable
+  devise :database_authenticatable, :registerable,
+         :recoverable, :rememberable, :trackable, :validatable
+
+  ## Token Authenticatable
+  acts_as_token_authenticatable
+  field :authentication_token
+
+  # ...
+end
+```
+
+### Allow controllers to handle token authentication
+
+Finally define which controllers will handle token authentication (typ. `ApplicationController`) for which _token authenticatable_ models:
 
 ```ruby
 # app/controllers/application_controller.rb
 
-class ApplicationController < ActionController::Base
+class ApplicationController < ActionController::Base # or ActionController::API
+                                                     # or ActionController::Metal
   # ...
 
   acts_as_token_authentication_handler_for User
 
   # Security note: controllers with no-CSRF protection must disable the Devise fallback,
   # see #49 for details.
-  # acts_as_token_authentication_handler_for User, fallback_to_devise: false
+  # acts_as_token_authentication_handler_for User, fallback: :none
 
   # The token authentication requirement can target specific controller actions:
   # acts_as_token_authentication_handler_for User, only: [:create, :update, :destroy]
   # acts_as_token_authentication_handler_for User, except: [:index, :show]
+  #
+  # Or target specific controller conditions:
+  # acts_as_token_authentication_handler_for User, unless: lambda { |controller| controller.request.format.html? }
+  # acts_as_token_authentication_handler_for User, if: lambda { |controller| controller.request.format.json? }
 
   # Several token authenticatable models can be handled by the same controller.
-  # If so, for all of them except the last, the fallback_to_devise should be disabled.
+  # If so, for all of them except the last, the fallback should be set to :none.
   #
   # Please do notice that the order of declaration defines the order of precedence.
   #
-  # acts_as_token_authentication_handler_for Admin, fallback_to_devise: false
-  # acts_as_token_authentication_handler_for SpecialUser, fallback_to_devise: false
+  # acts_as_token_authentication_handler_for Admin, fallback: :none
+  # acts_as_token_authentication_handler_for SpecialUser, fallback: :none
   # acts_as_token_authentication_handler_for User # the last fallback is up to you
+
+  # Aliases can be defined for namespaced models:
+  #
+  # acts_as_token_authentication_handler_for Customer::Representative, as: :facilitator
+  # acts_as_token_authentication_handler_for SpecialUser, as: :user
+  #
+  # When defined, aliases are used to define both the params and the header names to watch.
+  # E.g. facilitator_token, X-Facilitator-Token
 
   # ...
 end
@@ -96,7 +137,8 @@ Configuration
 -------------
 
 Some aspects of the behavior of _Simple Token Authentication_ can be customized with an initializer.
-Below is an example with reasonable defaults:
+
+The file below contains examples of the patterns that _token authentication handlers_ will watch for credentials (e.g. `user_email`, `X-SuperAdmin-Token`) and how to customize them:
 
 ```ruby
 # config/initializers/simple_token_authentication.rb
@@ -118,6 +160,9 @@ SimpleTokenAuthentication.configure do |config|
   # When several token authenticatable models are defined, custom header names
   # can be specified for none, any, or all of them.
   #
+  # Note: when using the identifiers options, this option behaviour is modified.
+  # Please see the example below.
+  #
   # Examples
   #
   #   Given User and SuperAdmin are token authenticatable,
@@ -128,8 +173,40 @@ SimpleTokenAuthentication.configure do |config|
   #   And the token authentification handler for SuperAdmin watches the following headers:
   #     `X-Admin-Auth-Token, X-SuperAdmin-Email`
   #
+  #   When the identifiers option is set:
+  #     `config.identifiers = { super_admin: :phone_number }`
+  #   Then both the header names identifier key and default value are modified accordingly:
+  #     `config.header_names = { super_admin: { phone_number: 'X-SuperAdmin-PhoneNumber' } }`
+  #
   # config.header_names = { user: { authentication_token: 'X-User-Token', email: 'X-User-Email' } }
 
+  # Configure the name of the attribute used to identify the user for authentication.
+  # That attribute must exist in your model.
+  #
+  # The default identifiers follow the pattern:
+  # { entity: 'email' }
+  #
+  # Note: the identifer must match your Devise configuration,
+  # see https://github.com/plataformatec/devise/wiki/How-To:-Allow-users-to-sign-in-using-their-username-or-email-address#tell-devise-to-use-username-in-the-authentication_keys
+  #
+  # Note: setting this option does modify the header_names behaviour,
+  # see the header_names section above.
+  #
+  # Example:
+  #
+  #   `config.identifiers = { super_admin: 'phone_number', user: 'uuid' }`
+  #
+  # config.identifiers = { user: 'email' }
+
+  # Configure the Devise trackable strategy integration.
+  #
+  # If true, tracking is disabled for token authentication: signing in through
+  # token authentication won't modify the Devise trackable statistics.
+  #
+  # If false, given Devise trackable is configured for the relevant model,
+  # then signing in through token authentication will be tracked as any other sign in.
+  #
+  # config.skip_devise_trackable = true
 end
 ```
 
@@ -161,29 +238,44 @@ X-User-Token 1G8_s7P-V-4MGojaKD7a
 
 In fact, you can mix both methods and provide the `user_email` with one and the `user_token` with the other, even if it would be a freak thing to do.
 
-### Integration with other authentication methods
+### Integration with other authentication and authorization methods
 
-If sign-in is successful, no other authentication method will be run, but if it doesn't (the authentication params were missing, or incorrect) then Devise takes control and tries to `authenticate_user!` with its own modules. That behaviour can however be modified for any controller through the **fallback_to_devise** option.
+If sign-in is successful, no other authentication method will be run, but if it doesn't (the authentication params were missing, or incorrect) then Devise takes control and tries to `authenticate_user!` with its own modules. That behaviour can however be modified for any controller through the **fallback** option (which defaults to `fallback: :devise`).
 
-**Important**: Please do notice that controller actions whithout CSRF protection **must** disable the Devise fallback for [security reasons][csrf]. Since Rails enables CSRF protection by default, this configuration requirement should only affect controllers where you have disabled it, which may be the case of API controllers.
+When `fallback: :exception` is set, then an exception is raised on token authentication failure. The resulting controller behaviour is very similar to the behaviour induced by using the Devise `authenticate_user!` callback instead of `authenticate_user`. That setting allows, for example, to prevent unauthenticated users to accede API controllers while disabling the default fallback to Devise.
+
+**Important**: Please do notice that controller actions without CSRF protection **must** disable the Devise fallback for [security reasons][csrf] (both `fallback: :exception` and `fallback: :none` will disable the Devise fallback). Since Rails enables CSRF protection by default, this configuration requirement should only affect controllers where you have disabled it specifically, which may be the case of API controllers.
+
+To use no fallback when token authentication fails, set `fallback: :none`.
 
   [csrf]: https://github.com/gonzalo-bulnes/simple_token_authentication/issues/49
 
-Documentation
--------------
+### Testing
 
-### Executable documentation
+Here is an example of how you can test-drive your configuration using [Minitest][minitest]:
 
-The Cucumber scenarii describe how to setup demonstration applications for different use cases. While you can read the `rake` output, you may prefer to read it in HTML format: see `doc/features.html`. The file is generated automatically by Cucumber, if necessary, you can update it by yourself:
+  [minitest]: https://github.com/seattlerb/minitest
 
-```bash
-cd simple_token_authentication
-rake features_html # generate the features documentation
+```ruby
+class SomeControllerTest < ActionController::TestCase
 
-# Open doc/features.html in your preferred web browser.
+  test "index with token authentication via query params" do
+    get :index, { user_email: "alice@example.com", user_token: "1G8_s7P-V-4MGojaKD7a" }
+    assert_response :success
+  end
+
+  test "index with token authentication via request headers" do
+    @request.headers['X-User-Email'] = "alice@example.com"
+    @request.headers['X-User-Token'] = "1G8_s7P-V-4MGojaKD7a"
+
+    get :index
+    assert_response :success
+  end
+end
 ```
 
-I find that HTML output quite enjoyable, I hope you'll do so!
+Documentation
+-------------
 
 ### Frequently Asked Questions
 
@@ -192,29 +284,35 @@ Any question? Please don't hesitate to open a new issue to get help. I keep ques
   [open-questions]: https://github.com/gonzalo-bulnes/simple_token_authentication/issues?labels=question&page=1&state=open
   [faq]: https://github.com/gonzalo-bulnes/simple_token_authentication/issues?direction=desc&labels=question&page=1&sort=comments&state=closed
 
-### Changelog
+### Change Log
 
-Releases are commented to provide a brief [changelog][changelog].
+Releases are commented to provide a [brief change log][releases], details can be found in the [`CHANGELOG`][changelog] file.
 
-  [changelog]: https://github.com/gonzalo-bulnes/simple_token_authentication/releases
+  [releases]: https://github.com/gonzalo-bulnes/simple_token_authentication/releases
+  [changelog]: ./CHANGELOG.md
 
 Development
 -----------
 
-### Testing (gem use cases)
+### Testing and documentation
 
-Since `v1.0.0`, this gem development is test-driven. The gem use cases are described with [RSpec][rspec] within an example app. That app is generated and configured automatically by [Aruba][aruba] as a [Cucumber][cucumber] feature.
+This gem development has been test-driven since `v1.0.0`. Until `v1.5.1`, the gem behaviour was described using [Cucumber][cucumber] and [RSpec][rspec] in a dummy app generated by [Aruba][aruba]. Since `v1.5.2` it is described using Rspec alone and [Appraisal][appraisal] is used since `v1.13.0` for [regression testing][regression].
 
-The resulting Cucumber features are a bit verbose, and their output when errors occur is not ideal, but their output when they are passing, on the contrary, provides an easy-to-reproduce recipe to build the example app (see [Executable documentation][exec-doc]). I find that useful enough to be patient with red scenarii for now.
+RSpec [tags][tags] are used to categorize the spec examples.
 
+Spec examples that are tagged as `public` describe aspects of the gem public API, and MAY be considered as the gem documentation.
+
+The `private` or `protected` specs are written for development purpose only. Because they describe internal behaviour which may change at any moment without notice, they are only executed as a secondary task by the [continuous integration service][travis] and SHOULD be ignored.
+
+Run `rake spec:public` to print the gem public documentation.
+
+  [appraisal]: https://github.com/thoughtbot/appraisal
   [aruba]: https://github.com/cucumber/aruba
   [cucumber]: https://github.com/cucumber/cucumber-rails
+  [regression]: https://github.com/gonzalo-bulnes/simple_token_authentication/wiki/Regression-Testing
   [rspec]: https://www.relishapp.com/rspec/rspec-rails/docs
-  [exec-doc]: https://github.com/gonzalo-bulnes/simple_token_authentication#executable-documentation
-
-Beside the gem use cases, the behaviour of each component of the gem-- taken individually --is described using RSpec. That RSpec-only tests suite provides documentation of the public interfaces implemented by the gem components, and a few private ones (for development purpose only).
-
-You can run the full test suite with `cd simple_token_authentication && rake`.
+  [tags]: https://www.relishapp.com/rspec/rspec-core/v/3-1/docs/command-line/tag-option
+  [travis]: https://travis-ci.org/gonzalo-bulnes/simple_token_authentication/builds
 
 ### Contributions
 
@@ -227,13 +325,16 @@ Please be sure to [review the open issues][open-questions] and contribute with y
 Credits
 -------
 
-It may sound a bit redundant, but this gem wouldn't exist without [this gist][original-gist].
+It may sound a bit redundant, but this gem wouldn't exist without [this gist][original-gist], nor without the [comments][issues] and [contributions][pulls] of many people. Thank them if you see them!
+
+  [issues]: https://github.com/gonzalo-bulnes/simple_token_authentication/issues
+  [pulls]: https://github.com/gonzalo-bulnes/simple_token_authentication/pulls
 
 License
 -------
 
     Simple Token Authentication
-    Copyright (C) 2013 Gonzalo Bulnes Guilpain
+    Copyright (C) 2013, 2014, 2015, 2016 Gonzalo Bulnes Guilpain
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by

@@ -1,4 +1,4 @@
-require 'active_support'
+require 'active_support/concern'
 require 'simple_token_authentication/token_generator'
 
 module SimpleTokenAuthentication
@@ -14,6 +14,10 @@ module SimpleTokenAuthentication
       private :token_generator
     end
 
+    # Set an authentication token if missing
+    #
+    # Because it is intended to be used as a filter,
+    # this method is -and should be kept- idempotent.
     def ensure_authentication_token
       if authentication_token.blank?
         self.authentication_token = generate_authentication_token(token_generator)
@@ -28,11 +32,11 @@ module SimpleTokenAuthentication
     end
 
     def token_suitable?(token)
-      not self.class.exists?(authentication_token: token)
+      self.class.where(authentication_token: token).count == 0
     end
 
     def token_generator
-      @token_generator ||= TokenGenerator.new
+      TokenGenerator.instance
     end
 
     module ClassMethods

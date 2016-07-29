@@ -1,6 +1,7 @@
 require 'simple_token_authentication/acts_as_token_authenticatable'
 require 'simple_token_authentication/acts_as_token_authentication_handler'
 require 'simple_token_authentication/configuration'
+require 'simple_token_authentication/errors'
 
 module SimpleTokenAuthentication
   extend Configuration
@@ -15,7 +16,7 @@ module SimpleTokenAuthentication
 
   def self.ensure_controllers_can_act_as_token_authentication_handlers controller_adapters
     controller_adapters.each do |controller_adapter|
-      controller_adapter.base_class.send :include, SimpleTokenAuthentication::ActsAsTokenAuthenticationHandler
+      controller_adapter.base_class.send :extend, SimpleTokenAuthentication::ActsAsTokenAuthenticationHandler
     end
   end
 
@@ -30,12 +31,22 @@ module SimpleTokenAuthentication
   #
   # Returns an Array of available adapters
   def self.load_available_adapters adapters_short_names
-    adapters_short_names.collect do |short_name|
+    available_adapters = adapters_short_names.collect do |short_name|
       adapter_name = "simple_token_authentication/adapters/#{short_name}_adapter"
-      if require adapter_name
+      if adapter_dependency_fulfilled?(short_name) && require(adapter_name)
         adapter_name.camelize.constantize
       end
     end
+    available_adapters.compact!
+
+    # stop here if dependencies are missing or no adequate adapters are present
+    raise NoAdapterAvailableError.new if available_adapters.empty?
+
+    available_adapters
+  end
+
+  def self.adapter_dependency_fulfilled? adapter_short_name
+    qualified_const_defined?(SimpleTokenAuthentication.adapters_dependencies[adapter_short_name])
   end
 
   available_model_adapters = load_available_adapters SimpleTokenAuthentication.model_adapters

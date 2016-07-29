@@ -4,7 +4,7 @@ describe SimpleTokenAuthentication::Entity do
 
   before(:each) do
     user = double()
-    user.stub(:name).and_return('SuperUser')
+    allow(user).to receive(:name).and_return('SuperUser')
     stub_const('SuperUser', user)
 
     @subject = SimpleTokenAuthentication::Entity.new(SuperUser)
@@ -64,6 +64,12 @@ describe SimpleTokenAuthentication::Entity do
       expect(@subject.name_underscore).to be_instance_of String
       expect(@subject.name_underscore).to eq @subject.name_underscore.underscore
     end
+
+    it 'can be predefined', token_authenticatable_aliases_option: true do
+      @subject = SimpleTokenAuthentication::Entity.new(SuperUser, 'incognito_super_user')
+
+      expect(@subject.name_underscore).to eq 'incognito_super_user'
+    end
   end
 
   describe '#token_header_name', protected: true do
@@ -76,13 +82,39 @@ describe SimpleTokenAuthentication::Entity do
     end
   end
 
-  describe '#identifier_header_name', protected: true do
+  describe '#identifier_header_name', protected: true, identifiers_option: true do
+
     it 'is a String' do
       expect(@subject.identifier_header_name).to be_instance_of String
     end
 
     it 'defines a non-standard header field' do
       expect(@subject.identifier_header_name[0..1]).to eq 'X-'
+    end
+
+    it 'returns the default header for the default identifier' do
+      expect(@subject.identifier_header_name).to eq 'X-SuperUser-Email'
+    end
+
+    context 'when a custom identifier is defined' do
+
+      before(:each) do
+        allow(SimpleTokenAuthentication).to receive(:identifiers).
+          and_return({ super_user: :phone_number })
+      end
+
+      it 'returns the default header name for that custom identifier' do
+        expect(@subject.identifier_header_name).to eq 'X-SuperUser-PhoneNumber'
+      end
+
+      context 'when a custom header name is defined for that custom identifer' do
+
+        it 'returns the custom header name for that custom identifier' do
+          allow(SimpleTokenAuthentication).to receive(:header_names).
+            and_return({ super_user: { phone_number: 'X-Custom' } })
+          expect(@subject.identifier_header_name).to eq 'X-Custom'
+        end
+      end
     end
   end
 
@@ -92,9 +124,43 @@ describe SimpleTokenAuthentication::Entity do
     end
   end
 
-  describe '#identifier_param_name', protected: true do
+  describe '#identifier_param_name', protected: true, identifiers_option: true do
+
     it 'is a Symbol' do
       expect(@subject.identifier_param_name).to be_instance_of Symbol
+    end
+
+    it 'returns the default param name for the default identifier' do
+      expect(@subject.identifier_param_name).to eq :super_user_email
+    end
+
+    context 'when a custom identifier is defined' do
+
+      it 'returns the custom param name for that identifier' do
+        allow(SimpleTokenAuthentication).to receive(:identifiers).
+          and_return({ super_user: 'phone_number' })
+        expect(@subject.identifier_param_name).to eq :super_user_phone_number
+      end
+    end
+  end
+
+  describe '#identifier', protected: true, identifiers_option: true do
+
+    it 'is a Symbol' do
+      expect(@subject.identifier).to be_instance_of Symbol
+    end
+
+    it 'returns :email' do
+      expect(@subject.identifier).to eq :email
+    end
+
+    context 'when a custom identifier is defined' do
+
+      it 'returns the custom identifier' do
+        allow(SimpleTokenAuthentication).to receive(:identifiers).
+          and_return({ super_user: 'phone_number' })
+        expect(@subject.identifier).to eq :phone_number
+      end
     end
   end
 
@@ -104,7 +170,7 @@ describe SimpleTokenAuthentication::Entity do
 
       before(:each) do
         @controller = double()
-        @controller.stub(:params).and_return({ super_user_token: 'The_ToKeN' })
+        allow(@controller).to receive(:params).and_return({ super_user_token: 'The_ToKeN' })
       end
 
       it 'returns that token (String)' do
@@ -115,7 +181,7 @@ describe SimpleTokenAuthentication::Entity do
       context 'and another token is present in the headers' do
 
         before(:each) do
-          @controller.stub_chain(:request, :headers)
+          allow(@controller).to receive_message_chain(:request, :headers)
                      .and_return({ 'X-SuperUser-Token' => 'HeAd3rs_ToKeN' })
         end
 
@@ -131,8 +197,8 @@ describe SimpleTokenAuthentication::Entity do
 
         before(:each) do
           @controller = double()
-          @controller.stub(:params).and_return({ super_user_token: '' })
-          @controller.stub_chain(:request, :headers)
+          allow(@controller).to receive(:params).and_return({ super_user_token: '' })
+          allow(@controller).to receive_message_chain(:request, :headers)
                      .and_return({ 'X-SuperUser-Token' => 'HeAd3rs_ToKeN' })
         end
 
@@ -149,7 +215,7 @@ describe SimpleTokenAuthentication::Entity do
 
       before(:each) do
         @controller = double()
-        @controller.stub(:params).and_return({ super_user_email: 'alice@example.com' })
+        allow(@controller).to receive(:params).and_return({ super_user_email: 'alice@example.com' })
       end
 
       it 'returns that identifier (String)' do
@@ -160,7 +226,7 @@ describe SimpleTokenAuthentication::Entity do
       context 'and another identifier is present in the headers' do
 
         before(:each) do
-          @controller.stub_chain(:request, :headers)
+          allow(@controller).to receive_message_chain(:request, :headers)
                      .and_return({ 'X-SuperUser-Email' => 'bob@example.com' })
         end
 
@@ -176,8 +242,8 @@ describe SimpleTokenAuthentication::Entity do
 
         before(:each) do
           @controller = double()
-          @controller.stub(:params).and_return({ super_user_email: '' })
-          @controller.stub_chain(:request, :headers)
+          allow(@controller).to receive(:params).and_return({ super_user_email: '' })
+          allow(@controller).to receive_message_chain(:request, :headers)
                      .and_return({ 'X-SuperUser-Email' => 'bob@example.com' })
         end
 
